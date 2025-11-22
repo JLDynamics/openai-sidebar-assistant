@@ -385,25 +385,27 @@ async function sendToAI(text, options = {}) {
         const loadingId = 'loading-' + Date.now();
         appendMessageToUI('System', 'Thinking...', loadingId);
 
-        const response = await chrome.runtime.sendMessage({
-            type: 'ASK_AI',
-            apiKey: API_KEY,
-            question: text,
-            metadata: metadata,
-            history: history
-        });
+        try {
+            const response = await chrome.runtime.sendMessage({
+                type: 'ASK_AI',
+                apiKey: API_KEY,
+                question: text,
+                metadata: metadata,
+                history: history
+            });
 
-        // Remove loading state
-        const loadingMsg = document.getElementById(loadingId);
-        if (loadingMsg) loadingMsg.remove();
-
-        if (response.error) {
-            appendMessageToUI('System', `Error: ${response.error}`);
-        } else {
-            const aiResponse = response.answer;
-            currentChat.messages.push({ role: 'AI', content: aiResponse });
-            saveChats();
-            appendMessageToUI('AI', aiResponse);
+            if (response.error) {
+                appendMessageToUI('System', `Error: ${response.error}`);
+            } else {
+                const aiResponse = response.answer;
+                currentChat.messages.push({ role: 'AI', content: aiResponse });
+                saveChats();
+                appendMessageToUI('AI', aiResponse);
+            }
+        } finally {
+            // Always remove loading state, even if there's an error
+            const loadingMsg = document.getElementById(loadingId);
+            if (loadingMsg) loadingMsg.remove();
         }
 
     } catch (error) {
