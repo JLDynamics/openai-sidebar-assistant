@@ -22,6 +22,7 @@
       ],
       "js": [
         "Readability.js",
+        "pdf.min.js",
         "content.js"
       ]
     }
@@ -35,7 +36,9 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "marked.min.js"
+        "marked.min.js",
+        "pdf.min.js",
+        "pdf.worker.min.js"
       ],
       "matches": [
         "<all_urls>"

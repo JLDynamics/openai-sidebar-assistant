@@ -40,11 +40,13 @@ Title: ${metadata.pageTitle}
 Content: ${truncatedContent}
 
 [INSTRUCTIONS]
-1. **Page Focus**: Use the provided webpage content when the user is asking about the current page.
-2. **Missing Info**: If the information is missing from the page (e.g. location, release date, price), AUTOMATICALLY use your web search capability.
-3. **General Questions**: If the question is unrelated to the page (e.g. "weather", "general knowledge"), ignore the page content and use web search.
-4. **No Hallucinations**: Always confirm facts using search if not in the page.
-5. **Format**: Present answers in clear, well-structured language. If you used search, cite your sources naturally.
+1. **Page Focus**: Use the provided webpage content (or video transcript, or PDF text) when the user is asking about the current page.
+2. **Video Transcripts**: If the content is a "Video Transcript", treat it as the spoken content of the video. Summarize or answer questions based on what was said.
+3. **PDF Documents**: If the content is "PDF Content", treat it as the text of the document. Answer questions based on the document text.
+4. **Missing Info**: If the information is missing from the page (e.g. location, release date, price), AUTOMATICALLY use your web search capability.
+5. **General Questions**: If the question is unrelated to the page (e.g. "weather", "general knowledge"), ignore the page content and use web search.
+6. **No Hallucinations**: Always confirm facts using search if not in the page.
+7. **Format**: Present answers in clear, well-structured language. If you used search, cite your sources naturally.
 `;
 
     // 2. Prepare Messages
