@@ -1,5 +1,4 @@
-const API_KEY = CONFIG.GEMINI_API_KEY;
-const MODEL = 'gemini-2.5-flash-preview-09-2025'; // Reverted due to quota limits
+const API_KEY = CONFIG.OPENROUTER_API_KEY;
 
 // State
 let chats = [];
@@ -416,7 +415,7 @@ function renderMessages() {
         chatContainer.innerHTML = `
             <div class="welcome-message">
                 <div class="welcome-icon">✨</div>
-                <h2>How can I help you today?</h2>
+                <h2>How can Grok help you today?</h2>
             </div>
         `;
         return;
