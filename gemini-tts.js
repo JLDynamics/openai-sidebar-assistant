@@ -8,6 +8,10 @@ class GeminiTTS {
 
         // Cache audio buffers by text to avoid re-generating for same message
         this.audioCache = new Map();
+
+        // Seek State
+        this.currentOffset = 0;
+        this.startTime = 0;
     }
 
     async initAudioContext() {
@@ -114,33 +118,83 @@ class GeminiTTS {
         return this.audioContext.decodeAudioData(bytes.buffer);
     }
 
-    play(audioBuffer, onEnded) {
-        this.stop(); // Stop any current playback
+    play(audioBuffer, offset = 0, onEnded) {
+        this.stop(false); // Stop current source, don't reset fully if just seeking
 
         const source = this.audioContext.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(this.audioContext.destination);
 
         source.onended = () => {
-            this.isPlaying = false;
-            this.currentSource = null;
-            if (onEnded) onEnded();
+            // Only if we reached the end naturally, not if we stopped it manually for seeking
+            if (this.currentSource === source) {
+                this.isPlaying = false;
+                this.currentSource = null;
+                this.currentOffset = 0;
+                if (onEnded) onEnded();
+            }
         };
 
-        source.start(0);
+        this.currentAudioBuffer = audioBuffer;
+        this.startTime = this.audioContext.currentTime - offset;
+        this.currentOffset = offset;
+
+        source.start(0, offset);
         this.currentSource = source;
         this.isPlaying = true;
     }
 
-    stop() {
+
+
+    pause() {
+        if (!this.isPlaying) return;
+        // Calculate where we are right now
+        const elapsed = this.audioContext.currentTime - this.startTime;
+        this.currentOffset = elapsed; // Save this position
+
         if (this.currentSource) {
             try {
                 this.currentSource.stop();
-            } catch (e) {
-                // Ignore if already stopped
-            }
+            } catch (e) { }
             this.currentSource = null;
         }
         this.isPlaying = false;
+    }
+
+    seek(delta) {
+        if (!this.currentAudioBuffer) return; // Can seek even if paused if we have buffer
+
+        // If playing, use current time. If paused, use saved offset.
+        let baseTime = this.isPlaying
+            ? (this.audioContext.currentTime - this.startTime)
+            : this.currentOffset;
+
+        let newTime = baseTime + delta;
+
+        // Clamp
+        newTime = Math.max(0, Math.min(newTime, this.currentAudioBuffer.duration));
+
+        if (this.isPlaying) {
+            // If playing, skip to new spot immediately
+            this.play(this.currentAudioBuffer, newTime, this.lastOnEnded);
+        } else {
+            // If paused, just update offset so hitting play resumes from new spot
+            this.currentOffset = newTime;
+        }
+    }
+
+    stop(fullReset = true) {
+        if (this.currentSource) {
+            try {
+                this.currentSource.stop();
+            } catch (e) { }
+            this.currentSource = null;
+        }
+        this.isPlaying = false;
+        if (fullReset) {
+            this.currentOffset = 0;
+            this.lastOnEnded = null;
+            this.currentText = null;
+        }
     }
 }

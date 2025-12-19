@@ -884,6 +884,45 @@ textarea::placeholder {
     }
 }
 
+/* TTS Player Controls */
+.tts-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+    padding: 2px;
+    margin-top: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tts-control-btn {
+    margin-top: 0 !important; /* Override action-btn margin */
+    padding: 4px;
+    border-radius: 6px;
+    color: var(--text-secondary);
+    width: 26px;
+    height: 26px;
+    background: transparent;
+    border: none;
+}
+
+.tts-control-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+}
+
+.tts-main-btn {
+    margin-top: 0 !important;
+    width: 32px;
+    height: 32px;
+    background: rgba(255, 255, 255, 0.08); 
+}
+
+.tts-main-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
 /* Scrollbar Styling */
 ::-webkit-scrollbar {
     width: 6px;

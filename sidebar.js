@@ -525,12 +525,49 @@ function appendMessageToUI(role, content, id = null, attachment = null) {
         copyMsgBtn.onclick = () => copyTextToClipboard(content, copyMsgBtn);
 
         // 2. TTS Button
+        // TTS Controls Container
+        const ttsControls = document.createElement('div');
+        ttsControls.className = 'tts-controls';
+
+        // Helper to create icon buttons
+        const createBtn = (iconSvg, title, onClick) => {
+            const btn = document.createElement('button');
+            btn.className = 'action-btn tts-control-btn';
+            btn.title = title;
+            btn.innerHTML = iconSvg;
+            btn.onclick = onClick;
+            return btn;
+        };
+
+        // Rewind Button (-15s)
+        const rewindBtn = createBtn(
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 19l-9-7 9-7v14z"></path><path d="M22 19l-9-7 9-7v14z"></path></svg>`,
+            "Rewind 15s",
+            async (e) => {
+                e.preventDefault(); // Prevent focus jump
+                await tts.prepare();
+                tts.seek(-15);
+            }
+        );
+
+        // Forward Button (+15s)
+        const forwardBtn = createBtn(
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 19l9-7-9-7v14z"></path><path d="M2 19l9-7-9-7v14z"></path></svg>`,
+            "Forward 15s",
+            async (e) => {
+                e.preventDefault();
+                await tts.prepare();
+                tts.seek(15);
+            }
+        );
+
+        // Play/Stop Button (Logic from before)
         const ttsBtn = document.createElement('button');
-        ttsBtn.className = 'action-btn tts-btn';
+        ttsBtn.className = 'action-btn tts-btn tts-main-btn';
         ttsBtn.title = 'Read aloud';
         ttsBtn.innerHTML = `
             <span class="tts-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
                     <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
                 </svg>
@@ -544,11 +581,12 @@ function appendMessageToUI(role, content, id = null, attachment = null) {
 
         ttsBtn.onclick = async () => {
             if (ttsBtn.classList.contains('playing')) {
-                tts.stop();
+                // User clicked "Pause" (was Playing)
+                tts.pause();
                 ttsBtn.classList.remove('playing');
                 ttsBtn.innerHTML = `
                     <span class="tts-icon">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
                             <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
                         </svg>
@@ -560,46 +598,46 @@ function appendMessageToUI(role, content, id = null, attachment = null) {
                     </span>
                 `;
             } else {
-                // Wake up audio engine immediately on interaction
+                // User clicked "Play" or "Resume"
                 await tts.prepare();
 
                 // Stop any other buttons
                 document.querySelectorAll('.tts-btn.playing').forEach(btn => {
-                    btn.classList.remove('playing');
-                    // Reset icon
-                    btn.querySelector('.tts-icon').innerHTML = `
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-                        </svg>
-                    `;
+                    // Logic to find other buttons and force stop them if we wanted exclusive play
+                    // For now, assume single playback focus or that TTS class handles single stream
                 });
 
                 ttsBtn.classList.add('loading');
 
                 try {
-                    // Strip markdown for cleaner speech (basic)
-                    // The tts model handles some markdown, but cleaning simple stuff helps.
-                    // For now pass raw content, Gemini TTS is smart.
+                    // Check if we are resuming the SAME message
+                    // We need to know if 'content' matches tts.currentText
+                    let offsetToUse = 0;
+                    if (tts.currentText === content && tts.currentOffset > 0) {
+                        offsetToUse = tts.currentOffset;
+                    }
+
+                    // Update currentText tracking if new
+                    tts.currentText = content;
 
                     const audioBuffer = await tts.generateSpeech(content);
 
                     ttsBtn.classList.remove('loading');
                     ttsBtn.classList.add('playing');
 
-                    // Change icon to Stop
+                    // Change icon to Pause
                     ttsBtn.querySelector('.tts-icon').innerHTML = `
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                              <rect x="6" y="4" width="4" height="16"></rect>
                              <rect x="14" y="4" width="4" height="16"></rect>
                         </svg>
                     `;
 
-                    tts.play(audioBuffer, () => {
+                    tts.play(audioBuffer, offsetToUse, () => {
                         ttsBtn.classList.remove('playing');
                         // Reset icon to Play
                         ttsBtn.querySelector('.tts-icon').innerHTML = `
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
                                 <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
                             </svg>
@@ -608,15 +646,19 @@ function appendMessageToUI(role, content, id = null, attachment = null) {
                 } catch (e) {
                     console.error(e);
                     ttsBtn.classList.remove('loading');
-                    // Show error state briefly
                     ttsBtn.style.color = '#ef4444';
                     setTimeout(() => ttsBtn.style.color = '', 2000);
                 }
             }
         };
 
+        ttsControls.appendChild(rewindBtn);
+        ttsControls.appendChild(ttsBtn);
+        ttsControls.appendChild(forwardBtn);
+
         actionsDiv.appendChild(copyMsgBtn);
-        actionsDiv.appendChild(ttsBtn);
+        // Replace direct ttsBtn append with the controls container
+        actionsDiv.appendChild(ttsControls);
         messageDiv.appendChild(actionsDiv);
     }
 
