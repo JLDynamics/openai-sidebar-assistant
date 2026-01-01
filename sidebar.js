@@ -5,6 +5,7 @@ let chats = [];
 let currentChatId = null;
 let isHistoryOpen = false;
 let currentAttachment = null;
+let pendingAction = null;
 
 // PDF.js Worker Configuration
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
@@ -716,7 +717,6 @@ function scrollToBottom() {
 }
 
 // Pending Action State
-let pendingAction = null;
 
 // Helper Functions for Intent
 function isAffirmative(text) {
@@ -950,3 +950,4 @@ function sanitizeHTML(html) {
 
     return template.innerHTML;
 }
+

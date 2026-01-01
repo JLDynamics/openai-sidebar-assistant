@@ -31,9 +31,12 @@ class GeminiTTS {
 
     async generateSpeech(text) {
         if (!text || !text.trim()) {
-            throw new Error('TTS received empty text');
-        }
+        throw new Error('TTS received empty text');
+    }
 
+    if (!this.apiKey) {
+        throw new Error('Missing Gemini TTS API key. Set GEMINI_TTS_API_KEY in config.js.');
+    }
         // Check cache first
         if (this.audioCache.has(text)) {
             return this.audioCache.get(text);
@@ -198,3 +201,5 @@ class GeminiTTS {
         }
     }
 }
+
+
