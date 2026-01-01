@@ -4,15 +4,29 @@ const API_KEY = CONFIG.OPENROUTER_API_KEY;
 let chats = [];
 let currentChatId = null;
 let isHistoryOpen = false;
+let currentAttachment = null;
+
+// PDF.js Worker Configuration
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdf.worker.min.js';
 
 // DOM Elements
 const historyDrawer = document.getElementById('historyDrawer');
 const historyList = document.getElementById('historyList');
 const toggleHistoryBtn = document.getElementById('toggleHistoryBtn');
+const historyCloseBtn = document.getElementById('historyCloseBtn');
+const historyOverlay = document.getElementById('historyOverlay');
 const newChatBtn = document.getElementById('newChatBtn');
 const chatContainer = document.getElementById('chatContainer');
 const chatInput = document.getElementById('chatInput');
 const sendBtn = document.getElementById('sendBtn');
+const fileInput = document.getElementById('fileInput');
+const uploadBtn = document.getElementById('uploadBtn');
+const imagePreviewContainer = document.getElementById('imagePreviewContainer');
+const dragDropOverlay = document.getElementById('dragDropOverlay');
+const inputContainer = document.getElementById('inputContainer');
+const lightbox = document.getElementById('lightbox');
+const lightboxImg = document.getElementById('lightboxImg');
+const lightboxClose = document.querySelector('.lightbox-close');
 
 // Initialization
 document.addEventListener('DOMContentLoaded', () => {
@@ -28,9 +42,14 @@ document.addEventListener('DOMContentLoaded', () => {
     setupInputAutoResize();
 });
 
+// TTS Initialization
+const tts = new GeminiTTS(CONFIG.GEMINI_TTS_API_KEY);
+
 // Event Listeners
 function setupEventListeners() {
     toggleHistoryBtn.addEventListener('click', toggleHistory);
+    historyCloseBtn.addEventListener('click', toggleHistory); // Close from inside drawer
+    historyOverlay.addEventListener('click', toggleHistory); // Close by clicking outside
     newChatBtn.addEventListener('click', createNewChat);
 
     sendBtn.addEventListener('click', sendMessage);
@@ -41,17 +60,242 @@ function setupEventListeners() {
             sendMessage();
         }
     });
+
+    // File Upload (Click)
+    uploadBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', handleFileSelection);
+
+    // Paste Support
+    chatInput.addEventListener('paste', handlePaste);
+
+    // Drag & Drop Support
+    setupDragAndDrop();
+
+    // Lightbox Controls
+    lightboxClose.addEventListener('click', closeLightbox);
+    lightbox.addEventListener('click', (e) => {
+        if (e.target !== lightboxImg) closeLightbox();
+    });
+
+    // Delegate click for zoomable images
+    chatContainer.addEventListener('click', (e) => {
+        if (e.target.classList.contains('sent-image')) {
+            openLightbox(e.target.src);
+        }
+    });
+}
+
+// Lightbox Logic
+function openLightbox(src) {
+    lightboxImg.src = src;
+    lightbox.classList.add('active');
+}
+
+function closeLightbox() {
+    lightbox.classList.remove('active');
+    lightboxImg.src = '';
+}
+
+// Drag & Drop Logic
+function setupDragAndDrop() {
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        inputContainer.addEventListener(eventName, preventDefaults, false);
+        document.body.addEventListener(eventName, preventDefaults, false);
+    });
+
+    inputContainer.addEventListener('dragenter', highlight, false);
+    inputContainer.addEventListener('dragover', highlight, false);
+    inputContainer.addEventListener('dragleave', unhighlight, false);
+    inputContainer.addEventListener('drop', handleDrop, false);
+}
+
+function preventDefaults(e) {
+    e.preventDefault();
+    e.stopPropagation();
+}
+
+function highlight() {
+    inputContainer.classList.add('drag-over');
+    dragDropOverlay.classList.add('active');
+}
+
+function unhighlight() {
+    inputContainer.classList.remove('drag-over');
+    dragDropOverlay.classList.remove('active');
+}
+
+function handleDrop(e) {
+    unhighlight();
+    const dt = e.dataTransfer;
+    const files = dt.files;
+    if (files.length > 0) {
+        processFile(files[0]);
+    }
+}
+
+// Paste Logic
+function handlePaste(e) {
+    const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+    for (const item of items) {
+        if (item.kind === 'file') {
+            const file = item.getAsFile();
+            processFile(file);
+        }
+    }
+}
+
+// File Processing
+function processFile(file) {
+    // Re-use existing handleFileSelection logic by mocking event or extracting core logic
+    // Refactoring handleFileSelection to processFileCore to share logic
+    const mockEvent = { target: { files: [file] } };
+    handleFileSelection(mockEvent);
 }
 
 // Input Auto-Resize
 function setupInputAutoResize() {
     chatInput.addEventListener('input', function () {
         this.style.height = 'auto';
-        this.style.height = (this.scrollHeight) + 'px';
+        this.style.height = (this.scrollHeight) + 'px'; // No max-height limit? CSS handles it? 
         if (this.value === '') {
-            this.style.height = 'auto';
+            this.style.height = 'auto'; // Reset min h
         }
     });
+}
+
+// File Handling
+async function handleFileSelection(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // Reset current attachment
+    currentAttachment = null;
+
+    try {
+        if (file.type.startsWith('image/')) {
+            const base64 = await convertFileToBase64(file);
+            currentAttachment = {
+                type: 'image',
+                content: base64,
+                name: file.name
+            };
+        } else if (file.type === 'application/pdf') {
+            // PDF handling
+            const text = await extractTextFromPDF(file);
+            currentAttachment = {
+                type: 'text',
+                content: text,
+                name: file.name
+            };
+        } else {
+            // Text/Code handling
+            const text = await readFileAsText(file);
+            currentAttachment = {
+                type: 'text',
+                content: text,
+                name: file.name
+            };
+        }
+        renderPreview();
+    } catch (e) {
+        console.error('File read error:', e);
+        alert('Error reading file: ' + e.message);
+    }
+
+    // Reset input so same file can be selected again
+    fileInput.value = '';
+}
+
+async function playTTS(text) {
+    if (!text) return;
+
+    // Wake up audio engine immediately on interaction
+    await tts.prepare();
+
+    const btn = document.querySelector('.speak-btn[data-playing="true"]');
+    if (btn) btn.setAttribute('data-playing', 'false'); // Reset others
+
+    try {
+
+        const audioBuffer = await tts.generateSpeech(text);
+        tts.play(audioBuffer, () => {
+            // On ended
+            const activeBtn = document.querySelector(`.speak-btn[data-text="${text.substring(0, 20)}..."]`); // Simplified selector logic
+            // In reality, we passed the button or managed state differently. 
+            // We'll rely on the existing UI toggle if it was working, or add one.
+        });
+    } catch (e) {
+        console.error("TTS Error", e);
+        alert("Failed to play audio: " + e.message);
+    }
+}
+
+function convertFileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = error => reject(error);
+        reader.readAsDataURL(file);
+    });
+}
+
+function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = error => reject(error);
+        reader.readAsText(file);
+    });
+}
+
+async function extractTextFromPDF(file) {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = '';
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(' ');
+        fullText += pageText + '\n\n';
+    }
+    return fullText;
+}
+
+function renderPreview() {
+    if (!currentAttachment) {
+        imagePreviewContainer.style.display = 'none';
+        imagePreviewContainer.innerHTML = '';
+        return;
+    }
+
+    imagePreviewContainer.style.display = 'flex';
+    imagePreviewContainer.innerHTML = '';
+
+    const item = document.createElement('div');
+    item.className = 'preview-item';
+
+    if (currentAttachment.type === 'image') {
+        const img = document.createElement('img');
+        img.src = currentAttachment.content;
+        item.appendChild(img);
+    } else {
+        const icon = document.createElement('div');
+        icon.className = 'file-icon';
+        icon.textContent = '📄'; // Generic doc icon
+        item.appendChild(icon);
+    }
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'preview-remove-btn';
+    removeBtn.innerHTML = '&times;';
+    removeBtn.onclick = () => {
+        currentAttachment = null;
+        renderPreview();
+    };
+
+    item.appendChild(removeBtn);
+    imagePreviewContainer.appendChild(item);
 }
 
 // History Management
@@ -133,8 +377,10 @@ function toggleHistory() {
 function updateHistoryDrawerToggle() {
     if (isHistoryOpen) {
         historyDrawer.classList.add('open');
+        if (historyOverlay) historyOverlay.classList.add('open');
     } else {
         historyDrawer.classList.remove('open');
+        if (historyOverlay) historyOverlay.classList.remove('open');
     }
 }
 
@@ -183,7 +429,7 @@ function renderMessages() {
     scrollToBottom();
 }
 
-function appendMessageToUI(role, content, id = null) {
+function appendMessageToUI(role, content, id = null, attachment = null) {
     // Remove welcome message if present
     const welcome = chatContainer.querySelector('.welcome-message');
     if (welcome) welcome.remove();
@@ -195,21 +441,274 @@ function appendMessageToUI(role, content, id = null) {
     const bubble = document.createElement('div');
     bubble.className = 'message-bubble';
 
-    if (role === 'System') {
-        bubble.textContent = content; // System messages (like URL info)
-        bubble.style.backgroundColor = 'transparent';
-        bubble.style.color = '#888';
-        bubble.style.fontSize = '12px';
-        bubble.style.padding = '4px 12px';
-    } else {
-        // Parse Markdown
-        bubble.innerHTML = marked.parse(content);
+    // Display Attachment if present (User only usually)
+    if (attachment && attachment.type === 'image') {
+        const img = document.createElement('img');
+        img.src = attachment.content;
+        img.className = 'sent-image';
+        bubble.appendChild(img);
+    }
+
+    // Display Text Content
+    if (content) {
+        if (role === 'System') {
+            bubble.textContent = content; // System messages (like URL info)
+            bubble.style.backgroundColor = 'transparent';
+            bubble.style.color = '#888';
+            bubble.style.fontSize = '12px';
+            bubble.style.padding = '4px 12px';
+        } else {
+            // Parse Markdown
+            let parsedContent = sanitizeHTML(marked.parse(content));
+
+            // Code Block Injection for Copy Button
+            // We use a temporary div to manipulate the HTML
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = parsedContent;
+
+            const preTags = tempDiv.querySelectorAll('pre');
+            preTags.forEach(pre => {
+                const codeContent = pre.innerText; // Get raw code
+
+                // Create Wrapper
+                const wrapper = document.createElement('div');
+                wrapper.className = 'code-wrapper';
+
+                // Create Header
+                const header = document.createElement('div');
+                header.className = 'code-header';
+                header.innerHTML = `
+                    <span class="code-lang">Code</span>
+                    <button class="copy-btn" onclick="copyToClipboard(this)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                        Copy
+                    </button>
+                `;
+
+                // Wrap existing pre
+                const newPre = pre.cloneNode(true);
+                // Hide the original data property for potential recovery if needed, but innerText works
+                newPre.dataset.code = codeContent;
+
+                wrapper.appendChild(header);
+                wrapper.appendChild(newPre);
+
+                pre.replaceWith(wrapper);
+            });
+
+            // Append parsed text content after any images
+            const textDiv = document.createElement('div');
+            textDiv.innerHTML = tempDiv.innerHTML;
+            bubble.appendChild(textDiv);
+        }
     }
 
     messageDiv.appendChild(bubble);
+
+    // Add Actions (Copy + TTS) for AI messages
+    if (role === 'AI') {
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'message-actions';
+
+        // 1. Copy Button
+        const copyMsgBtn = document.createElement('button');
+        copyMsgBtn.className = 'action-btn copy-msg-btn';
+        copyMsgBtn.title = 'Copy Message';
+        copyMsgBtn.innerHTML = `
+             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+        `;
+        copyMsgBtn.onclick = () => copyTextToClipboard(content, copyMsgBtn);
+
+        // 2. TTS Button
+        // TTS Controls Container
+        const ttsControls = document.createElement('div');
+        ttsControls.className = 'tts-controls';
+
+        // Helper to create icon buttons
+        const createBtn = (iconSvg, title, onClick) => {
+            const btn = document.createElement('button');
+            btn.className = 'action-btn tts-control-btn';
+            btn.title = title;
+            btn.innerHTML = iconSvg;
+            btn.onclick = onClick;
+            return btn;
+        };
+
+        // Rewind Button (-15s)
+        const rewindBtn = createBtn(
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 19l-9-7 9-7v14z"></path><path d="M22 19l-9-7 9-7v14z"></path></svg>`,
+            "Rewind 15s",
+            async (e) => {
+                e.preventDefault(); // Prevent focus jump
+                await tts.prepare();
+                tts.seek(-15);
+            }
+        );
+
+        // Forward Button (+15s)
+        const forwardBtn = createBtn(
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 19l9-7-9-7v14z"></path><path d="M2 19l9-7-9-7v14z"></path></svg>`,
+            "Forward 15s",
+            async (e) => {
+                e.preventDefault();
+                await tts.prepare();
+                tts.seek(15);
+            }
+        );
+
+        // Play/Stop Button (Logic from before)
+        const ttsBtn = document.createElement('button');
+        ttsBtn.className = 'action-btn tts-btn tts-main-btn';
+        ttsBtn.title = 'Read aloud';
+        ttsBtn.innerHTML = `
+            <span class="tts-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                </svg>
+            </span>
+            <span class="tts-spinner">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+                </svg>
+            </span>
+        `;
+
+        ttsBtn.onclick = async () => {
+            if (ttsBtn.classList.contains('playing')) {
+                // User clicked "Pause" (was Playing)
+                tts.pause();
+                ttsBtn.classList.remove('playing');
+                ttsBtn.innerHTML = `
+                    <span class="tts-icon">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                        </svg>
+                    </span>
+                    <span class="tts-spinner">
+                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+                        </svg>
+                    </span>
+                `;
+            } else {
+                // User clicked "Play" or "Resume"
+                await tts.prepare();
+
+                // Stop any other buttons
+                document.querySelectorAll('.tts-btn.playing').forEach(btn => {
+                    // Logic to find other buttons and force stop them if we wanted exclusive play
+                    // For now, assume single playback focus or that TTS class handles single stream
+                });
+
+                ttsBtn.classList.add('loading');
+
+                try {
+                    // Check if we are resuming the SAME message
+                    // We need to know if 'content' matches tts.currentText
+                    let offsetToUse = 0;
+                    if (tts.currentText === content && tts.currentOffset > 0) {
+                        offsetToUse = tts.currentOffset;
+                    }
+
+                    // Update currentText tracking if new
+                    tts.currentText = content;
+
+                    const audioBuffer = await tts.generateSpeech(content);
+
+                    ttsBtn.classList.remove('loading');
+                    ttsBtn.classList.add('playing');
+
+                    // Change icon to Pause
+                    ttsBtn.querySelector('.tts-icon').innerHTML = `
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                             <rect x="6" y="4" width="4" height="16"></rect>
+                             <rect x="14" y="4" width="4" height="16"></rect>
+                        </svg>
+                    `;
+
+                    tts.play(audioBuffer, offsetToUse, () => {
+                        ttsBtn.classList.remove('playing');
+                        // Reset icon to Play
+                        ttsBtn.querySelector('.tts-icon').innerHTML = `
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                            </svg>
+                        `;
+                    });
+                } catch (e) {
+                    console.error(e);
+                    ttsBtn.classList.remove('loading');
+                    ttsBtn.style.color = '#ef4444';
+                    setTimeout(() => ttsBtn.style.color = '', 2000);
+                }
+            }
+        };
+
+        ttsControls.appendChild(rewindBtn);
+        ttsControls.appendChild(ttsBtn);
+        ttsControls.appendChild(forwardBtn);
+
+        actionsDiv.appendChild(copyMsgBtn);
+        // Replace direct ttsBtn append with the controls container
+        actionsDiv.appendChild(ttsControls);
+        messageDiv.appendChild(actionsDiv);
+    }
+
     chatContainer.appendChild(messageDiv);
 
     scrollToBottom();
+}
+
+// Global Copy Function
+window.copyToClipboard = function (btn) {
+    const wrapper = btn.closest('.code-wrapper');
+    const pre = wrapper.querySelector('pre');
+    const code = pre.innerText;
+
+    navigator.clipboard.writeText(code).then(() => {
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            Copied!
+        `;
+        btn.classList.add('copied');
+
+        setTimeout(() => {
+            btn.innerHTML = originalHtml;
+            btn.classList.remove('copied');
+        }, 2000);
+    }).catch(err => {
+        console.error('Failed to copy class: ', err);
+    });
+};
+
+// Helper for copying raw text
+function copyTextToClipboard(text, btn) {
+    navigator.clipboard.writeText(text).then(() => {
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+        `;
+        btn.classList.add('copied');
+
+        setTimeout(() => {
+            btn.innerHTML = originalHtml;
+            btn.classList.remove('copied');
+        }, 2000);
+    }).catch(console.error);
 }
 
 function scrollToBottom() {
@@ -312,11 +811,16 @@ async function executePendingAction(action) {
 // Messaging Logic
 async function sendMessage() {
     const text = chatInput.value.trim();
-    if (!text) return;
+    if (!text && !currentAttachment) return;
 
     // Clear input
     chatInput.value = '';
     chatInput.style.height = 'auto';
+
+    // Capture attachment and clear state
+    const attachment = currentAttachment;
+    currentAttachment = null;
+    renderPreview();
 
     // Check for Pending Action Interception
     if (pendingAction) {
@@ -331,28 +835,43 @@ async function sendMessage() {
             setTimeout(() => appendMessageToUI('AI', "Okay, I won't do that."), 500);
             return;
         }
-        // If ambiguous, fall through to normal sending but keep pendingAction? 
-        // Prompt says: "Should NOT clear pendingAction" for unrelated questions.
-        // But if we send a new request, the AI might change topic, so maybe we should clear it?
-        // The prompt says "Should NOT clear pendingAction" for unrelated.
-        // However, if the user asks a NEW question, the previous context might be lost.
-        // For now, we'll keep it as per prompt instructions.
     }
 
-    // Add user message
+    // Add user message to state
     const currentChat = chats.find(c => c.id === currentChatId);
     if (!currentChat) return;
 
-    currentChat.messages.push({ role: 'User', content: text });
+    // Store message in history (simplified for storage)
+    // If it's a file content, we might append it to text or just store metadata?
+    // For simplicity, if it's text file, append to content. If image, store separately or as base64?
+    // Storing large base64 in local storage is risky (quota). 
+    // Let's truncate image for history or just mark it.
+    // For now, valid JSON history is crucial.
+
+    let storedContent = text;
+    if (attachment) {
+        if (attachment.type === 'text') {
+            storedContent += `\n\n[File: ${attachment.name}]\n${attachment.content}`;
+        } else {
+            // Image: For now, we won't store large base64 in localStorage history to avoid quota issues quickly.
+            // We'll just note it.
+            storedContent += `\n\n[Uploaded Image: ${attachment.name}]`;
+        }
+    }
+
+    currentChat.messages.push({ role: 'User', content: storedContent });
     currentChat.lastUpdated = Date.now();
 
     // Update title if needed
-    updateChatTitle(currentChatId, text);
+    updateChatTitle(currentChatId, text || "File Upload");
 
     saveChats();
-    appendMessageToUI('User', text);
 
-    await sendToAI(text);
+    // UI Display
+    appendMessageToUI('User', text, null, attachment);
+
+    // Send payload
+    await sendToAI(text, { attachment });
 }
 
 async function sendToAI(text, options = {}) {
@@ -373,24 +892,23 @@ async function sendToAI(text, options = {}) {
         }
 
         // Prepare History (Last 10 messages for context)
-        // Map to OpenAI format { role: 'user'|'assistant', content: string }
         const history = currentChat.messages.slice(-10).map(m => ({
             role: m.role === 'User' ? 'user' : 'assistant',
             content: m.content
         }));
 
         // Send to Background
-        // Show loading state
         const loadingId = 'loading-' + Date.now();
         appendMessageToUI('System', 'Thinking...', loadingId);
 
         try {
             const response = await chrome.runtime.sendMessage({
                 type: 'ASK_AI',
-                apiKey: API_KEY,
+                apiKey: API_KEY, // Still using config key
                 question: text,
                 metadata: metadata,
-                history: history
+                history: history,
+                attachment: options.attachment // Pass attachment to background
             });
 
             if (response.error) {
@@ -402,7 +920,6 @@ async function sendToAI(text, options = {}) {
                 appendMessageToUI('AI', aiResponse);
             }
         } finally {
-            // Always remove loading state, even if there's an error
             const loadingMsg = document.getElementById(loadingId);
             if (loadingMsg) loadingMsg.remove();
         }
@@ -411,4 +928,25 @@ async function sendToAI(text, options = {}) {
         console.error('Error sending message:', error);
         appendMessageToUI('System', 'Error communicating with AI.');
     }
+}
+// Basic HTML Sanitizer
+function sanitizeHTML(html) {
+    const template = document.createElement('div');
+    template.innerHTML = html;
+
+    // Remove scripts
+    const scripts = template.querySelectorAll('script');
+    scripts.forEach(script => script.remove());
+
+    // Remove event handlers (onclick, etc)
+    const all = template.querySelectorAll('*');
+    all.forEach(el => {
+        Array.from(el.attributes).forEach(attr => {
+            if (attr.name.startsWith('on') || attr.name.startsWith('javascript:')) {
+                el.removeAttribute(attr.name);
+            }
+        });
+    });
+
+    return template.innerHTML;
 }

@@ -10,7 +10,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             request.apiKey,
             request.question,
             request.metadata,
-            request.history
+            request.history,
+            request.attachment
         )
             .then(answer => sendResponse({ answer }))
             .catch(error => sendResponse({ error: error.message }));
@@ -23,8 +24,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // --- OpenAI Integration ---
 
-async function handleOpenAIRequest(apiKey, question, metadata, history) {
+async function handleOpenAIRequest(apiKey, question, metadata, history, attachment) {
     const OPENROUTER_API_KEY = apiKey;
+    if (!OPENROUTER_API_KEY) {
+        throw new Error('API key missing. Please set OPENROUTER_API_KEY in config.js.');
+    }
+
     // Use OpenRouter API endpoint
     const url = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -49,33 +54,80 @@ Content: ${truncatedContent}
 7. **Format**: Present answers in clear, well-structured language. If you used search, cite your sources naturally.
 `;
 
-    // 2. Prepare Messages
+    // 2. Prepare User Message (Multi-modal)
+    let userContent = [];
+
+    // Add text question (or default if only image sent)
+    if (question) {
+        userContent.push({ type: "text", text: question });
+    } else if (attachment) {
+        userContent.push({ type: "text", text: "Analyze this file." });
+    }
+
+    // Add Attachment Logic
+    if (attachment) {
+        if (attachment.type === 'image') {
+            userContent.push({
+                type: "image_url",
+                image_url: {
+                    url: attachment.content
+                }
+            });
+        } else if (attachment.type === 'text') {
+            const fileContext = `\n\n[Attached File: ${attachment.name}]\n${attachment.content}\n`;
+
+            if (userContent.length > 0 && userContent[0].type === 'text') {
+                userContent[0].text += fileContext;
+            } else {
+                userContent.push({ type: "text", text: fileContext });
+            }
+        }
+    }
+
+    // 3. Prepare Full Message Chain
     const messages = [
         { role: 'system', content: systemPrompt },
         ...history,
-        { role: 'user', content: question }
+        { role: 'user', content: userContent }
     ];
 
-    // 3. Make API Call with Native Web Search Enabled
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${OPENROUTER_API_KEY}`
-        },
-        body: JSON.stringify({
-            model: "x-ai/grok-4.1-fast",
-            messages: messages,
-            web_search_options: {}, // Enable Grok's native web search
-            extra_body: {
-                reasoning: {
-                    enabled: false // Disable reasoning for faster responses
-                }
-            }
-        })
-    });
+    // 4. Make API Call with Native Web Search Enabled
+    let data;
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            cache: 'no-store',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
+                // OpenRouter requires one of these for browser-based requests
+                'X-Title': 'Grok Sidebar Assistant',
+                'HTTP-Referer': metadata?.url || 'https://grok-sidebar'
+            },
+            body: JSON.stringify({
+                model: "x-ai/grok-4.1-fast",
+                messages: messages,
+                web_search_options: {},
+                extra_body: {
+                    reasoning: {
+                        enabled: false
+                    }
+                },
+                max_tokens: 1000
+            })
+        });
 
-    const data = await response.json();
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Request failed (${response.status}): ${errorText || response.statusText}`);
+        }
+
+        data = await response.json();
+    } catch (err) {
+        console.error('OpenRouter fetch error:', err);
+        throw new Error(`Network error contacting OpenRouter: ${err.message}`);
+    }
 
     if (data.error) throw new Error(data.error.message);
     if (!data.choices || data.choices.length === 0) {
