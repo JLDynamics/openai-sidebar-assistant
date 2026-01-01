@@ -64,7 +64,7 @@ Content: ${truncatedContent}
             'Authorization': `Bearer ${OPENROUTER_API_KEY}`
         },
         body: JSON.stringify({
-            model: "x-ai/grok-4.1-fast:free",
+            model: "x-ai/grok-4.1-fast",
             messages: messages,
             web_search_options: {}, // Enable Grok's native web search
             extra_body: {
